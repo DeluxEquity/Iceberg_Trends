@@ -1,0 +1,72 @@
+The following are instructions on how to get Apache Iceberg working on AWS with S3 and Athena
+
+1) On AWS, type cloud formation in the console, then in the top right corner create a new stack with resources.
+2) Select "Template is ready" and Upload the iceberg yml file attached in this repo. 
+3) Give your new stack a name and then name your S3 bucket. 
+4) All role permissions should remain thhe same. 
+5) After the stack is created, enter your new S3 bucket and upload a dataset (link for the ratings.csv we used is in the readme.md
+6) In the console, enter Athena to begin creating your iceberg tables. 
+7) In Athena, type the following code:
+
+--Create Table for your csv--
+CREATE EXTERNAL TABLE
+  iceberg_tutorial_db.ratings_csv
+  (
+        userId bigint,
+        movieId bigint,
+        rating double,
+        rate_date timestamp
+  )
+  ROW FORMAT DELIMITED
+  FIELDS TERMINATED BY ','
+  STORED AS TEXTFILE
+  LOCATION 's3://<bucket_name>/ratings_csv/';
+
+--Create Iceberg Table--
+CREATE TABLE
+  iceberg_tutorial_db.ratings_iceberg
+  (
+        userId bigint,
+        movieId bigint,
+        rating double,
+        rate_date timestamp
+  )
+  PARTITIONED BY (year(rate_date))
+  LOCATION 's3://<bucket_name>/ratings_iceberg/'
+  TBLPROPERTIES ( 'table_type' ='ICEBERG'  );
+
+--Populate Iceberg Table--
+INSERT INTO iceberg_tutorial_db.ratings_iceberg
+SELECT 
+*
+FROM "iceberg_tutorial_db"."ratings_csv" ;
+
+--Update fields in the iceberg table--
+UPDATE ratings_iceberg 
+SET rating = 2.7 
+WHERE movieid = 500 AND year(rate_date) = 2007;
+
+--Snapshot/TimeTravel/ACID transactions--
+Unfortuantely, there was an update that happened in Athena that has broken the time travel queiries (We did not discover this until later on). 
+
+Time travel is still compatible with other sources such as Apache Spark with Iceberg, Trino or Starbust, and AWS Glue Data Catalog + S3 metadata inspection.
+
+This is what the time travel queiries would look like in Athena pre-update. 
+
+SELECT * 
+FROM "ratings_iceberg" 
+WITH (snapshot_timestamp = TIMESTAMP '2025-04-23 17:00:00') 
+WHERE movieid = 500 
+  AND year(rate_date) = 2007 
+LIMIT 10;
+
+This would allow users to see the different variations of the same table before all its changes. 
+
+In Spark, this is what it would look like to rollback your data to a previous version. 
+
+CALL system.rollback_to_snapshot(
+  'iceberg_tutorial_db.ratings_iceberg_data_manipulation',
+  1234567890123456789  -- ← your real snapshot ID here
+);
+
+
